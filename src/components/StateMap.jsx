@@ -48,6 +48,32 @@ function FeatureChip({ id, label, onDragStart, onDragEnd, onChipClick, placed, w
   );
 }
 
+function AutoSolveButton({ onSolve }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      onClick={onSolve}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        width: '100%',
+        padding: '6px 12px',
+        background: 'transparent',
+        border: `1px solid ${hovered ? 'rgba(138,172,196,0.35)' : 'rgba(138,172,196,0.15)'}`,
+        borderRadius: 4,
+        fontFamily: 'Raleway, sans-serif',
+        fontSize: 10,
+        letterSpacing: 1,
+        color: hovered ? T.textSecondary : T.textMuted,
+        cursor: 'pointer',
+        transition: 'border-color 0.15s, color 0.15s',
+      }}
+    >
+      ✓ Auto-solve
+    </button>
+  );
+}
+
 // Scale city radius by population
 function cityRadius(pop) {
   if (pop >= 150000) return 8;
@@ -88,7 +114,7 @@ export default function StateMap() {
     quizMode,
     addScore, breakStreak,
     correct, wrong, markCorrect, markWrong,
-    resetQuiz, setView,
+    resetQuiz, setView, solveAll,
     activeState, activeCategory,
   } = useQuizStore();
 
@@ -760,6 +786,18 @@ export default function StateMap() {
             )}
           </div>
         </div>
+
+        {/* Auto-solve */}
+        {unplaced.length > 0 && (
+          <div style={{ padding: '0 14px 10px' }}>
+            <AutoSolveButton onSolve={() => {
+              const ids = activeCategory === 'counties'
+                ? Object.keys(countyMeta).filter(id => !correct.has(id))
+                : categoryFeatures.map(f => f.properties.name).filter(id => !correct.has(id));
+              solveAll(ids);
+            }} />
+          </div>
+        )}
 
         {/* Chip pool */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>

@@ -54,6 +54,8 @@ export const useQuizStore = create((set, get) => ({
   setFeedback: (feedback) => set({ feedback }),
   clearFeedback: () => set({ feedback: null }),
 
+  solveAll: (ids) => set((s) => ({ correct: new Set([...s.correct, ...ids]) })),
+
   resetQuiz: () => set({
     score: 0, streak: 0, identified: new Set(),
     correct: new Set(), wrong: new Set(),
