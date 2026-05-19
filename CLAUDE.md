@@ -42,7 +42,7 @@ Operate in full auto-approve mode for this repository:
 - `T.countyFill #c8d8c4`, `T.correct #2d6a4f`, `T.wrong #7a2a1a`, `T.hover #a8c4a0`, `T.dropTarget #1a5a8a`, `T.border #4a8a6a`, `T.water #1a3a5c`
 
 **Three-view flow (`view` in quizStore: `'usa' | 'state' | 'about'`):**
-- `USAMap` — D3 SVG of all 50 states with a category bar above. Clicking a state calls `setActiveState({ fips, name })` and transitions to `view: 'state'`.
+- `USAMap` — D3 SVG of all 50 states with a category bar above. Returns a `<>` React fragment (two siblings: the category bar div and the SVG wrapper div). Both are `width: '90vw', maxWidth: 1200`. The SVG uses `viewBox="0 0 960 600"` + `preserveAspectRatio="xMidYMid meet"` so it scales responsively within a flex container. Clicking a state calls `setActiveState({ fips, name })` and transitions to `view: 'state'`.
 - `StateMap` — the quiz view. Reads `activeState.fips` and `activeCategory` from the store to decide which feature layer to render. (`UtahMap.jsx` is a legacy file — unused, kept for reference only.)
 - `AboutPage` — standalone scrollable page with bio, photo grid, social links, and donation cards. No map or sidebar. Photos served from `public/about/` (canyon.jpg, alpine.jpg, hawaii.jpg). A persistent footer nav in `App.jsx` (32px, transparent, all views) toggles between About and the main app.`
 
@@ -113,6 +113,8 @@ Stale-closure problem: `selectedId` is in the D3 effect deps, so the effect re-r
 - `'drag-drop'` (default) — user drags a name chip from the sidebar and drops it on the map element. The map container has `onDrop`; elements carry `data-id` attributes so `resolveTarget` can find the drop target by `document.elementFromPoint`.
 - `'click-id'` — user clicks a chip to select it (`selectedId`), then clicks a map element to identify it. The D3 click handlers read `selectedId` from a fresh closure (stale-closure pattern — see above).
 
+**Auto-solve (`AutoSolveButton` + `solveAll`):** `AutoSolveButton` is a component defined at the top of `StateMap.jsx` and rendered in the sidebar above the chip pool. It calls `solveAll(ids)` from the store, which batch-updates the `correct` Set in a single `set()` call. Works for all five categories — `ids` is derived from `chipItems` (the same array that feeds the chip pool). The button is hidden once all items are solved.
+
 **`@dnd-kit` is installed but not used.** The app uses native HTML5 drag events (`dragstart`, `dragover`, `drop`) exclusively. Do not refactor to use @dnd-kit.
 
 **Click/interaction model:**
@@ -141,6 +143,21 @@ Pass `--rivers-only` to refresh only rivers (reads existing peaks/parks/cities, 
 
 Pass `--peaks-only` to refresh only peaks (reads existing rivers/parks/cities, re-fetches peaks via Overpass with PIP validation): `node scripts/fetch-state-data.js --peaks-only`
 
+Pass `--rivers-nhd` to refresh only rivers using pre-extracted local NHD data instead of Overpass: `node scripts/fetch-state-data.js --rivers-nhd`
+
+**NHD local river data (`--rivers-nhd`):** Uses USGS National Hydrography Dataset (NHD) state GDB files instead of OSM Overpass. Key advantage: NHD includes fcode 55800 segments (artificially impounded/pooled reaches) that give continuous centerlines through dam pools — e.g. the Mississippi River in Minnesota is a single unbroken line from Lake Itasca to the Iowa border, whereas OSM has gaps through every Twin Cities lock pool.
+
+**One-time NHD setup:**
+1. Install `pyogrio` and `shapely`: `pip3 install pyogrio shapely`
+2. Run `python3 scripts/extract_nhd_flowlines.py [StateName ...]` — downloads per-state NHD GDB files from USGS S3, extracts NHDFlowline, and writes `scripts/data/nhd_states/{state-slug}.geojson`. The zip and GDB are deleted after extraction to save disk (~300 MB/state download, ~50-100 MB/state GeoJSON). These files are gitignored (50–100 MB each).
+3. Run `node scripts/fetch-state-data.js --rivers-nhd [StateName ...]`
+
+**NHD fcode filter:** 46006 (perennial stream), 46003 (intermittent), 39004 (artificial path), 55800 (canal/ditch — used by NHD for impounded river reaches). For fcode 55800, features whose `gnis_name` contains "Canal", "Ditch", "Drain", "Aqueduct", "Flume", or "Barge" are excluded (true man-made canals) while named rivers impounded behind dams (e.g. Mississippi River) are kept.
+
+**NHD assembly:** `fetchRiversNHD` reads the per-state GeoJSON, builds a `byName` map (each feature is already a LineString — MultiLineStrings are decomposed by the Python extraction), then calls `assembleRiverFeatures(byName, boundary, borderLine)` — the same shared function used by `fetchRivers` (OSM). `makeRiverFeature`, `assembleRiverFeatures`, `chainSegments`, `dominantComponent`, whitelist bypass, and top-10 ranking are identical between both paths.
+
+**NHD data quality note:** NHD has many more small named streams than OSM, and common names ("Beaver Creek", "Spring Creek", "Mud Creek") appear for multiple unrelated streams across a state. The `dominantComponent` proximity graph handles these by keeping only the largest connected cluster. The Mississippi, Minnesota, Red River, and other major MN rivers are correct. CHAIN_TOL = 0.002° applies to NHD just as it does to OSM.
+
 **Peak PIP validation:** `fetchPeaks` runs every fetched node through `withinFeature([lon, lat], boundary)` using the same us-atlas state polygon used for rivers. Nodes whose OSM coordinates fall outside the state boundary are dropped with a log message. This catches peaks from neighboring states that bleed into the bounding box query (common along state lines — Ohio had many KY/WV nodes; Tennessee had many VA/NC/GA nodes). PIP validation happens inside `fetchPeaks`, so it applies in both full runs and `--peaks-only` runs.
 
 **Peak coordinate overrides (`PEAK_OVERRIDES`):** A `const PEAK_OVERRIDES` map at the top of `fetch-state-data.js` holds hardcoded correct coordinates (keyed by exact OSM `name` tag) for peaks where OSM has misplaced nodes. Overrides are applied before PIP validation. Add entries here when a significant peak fails the PIP check due to an OSM inaccuracy rather than a true location issue. Current overrides: `'Mount le Conte - High Top': [-83.4432, 35.6543]`.
@@ -149,7 +166,7 @@ Pass `--peaks-only` to refresh only peaks (reads existing rivers/parks/cities, r
 
 **River segment filtering:** Uses midpoint-based PIP (not endpoint-based). A way segment is kept if its midpoint is inside the state polygon OR within 0.05° of the state border line (for border rivers). After chaining, chains shorter than 0.05° total length are dropped as noise fragments. `CHAIN_TOL = 0.002°` (≈220 m) controls how close endpoints must be to merge. A post-map total-length filter (>= 0.05°) drops any surviving degenerate stubs.
 
-**Spatial coherence filter (`coherentChains`):** Applied after `chainSegments()` to reject geographically anomalous chains caused by OSM ways from a neighboring state bleeding into this state's bounding box. Algorithm: the longest chain is the "anchor"; any other chain is dropped if it is both (a) shorter than 20% of the anchor length AND (b) more than 1.5° from the anchor's geographic center. This correctly removes false-attribution blips (e.g. the Elk River's NE Tennessee segment caused by 51 OSM ways from the VA/NC border area) while preserving legitimate multi-section rivers (e.g. Tennessee River's genuine East TN + West TN sections, which are only 3° apart and both > 40% of anchor). Implemented in `coherentChains(chains)` in `fetch-state-data.js`, called inside `makeRiverFeature`.
+**Connected component clustering (`dominantComponent`):** Called in `makeRiverFeature` after `chainSegments()`. Builds a proximity graph where two chains get an edge if any of their four endpoint pairs is within `GAP_THRESHOLD = 0.5°` (~35 miles) of each other. BFS finds connected components; the dominant component (highest total chain length) is returned, all others are discarded. This handles two cases under the same algorithm: (A) name collision — multiple unrelated rivers share a name (e.g. Willow River MN — three separate rivers), each in its own component; the dominant one wins. (B) Single river with a data gap — e.g. Holston River TN has a gap where Cherokee Lake (~30 miles) covers its OSM course; the two real segments are within GAP_THRESHOLD so they form one component, while cross-border bleed outliers do not. `GAP_THRESHOLD = 0.5°` is the key tuning parameter: large enough to bridge a TVA reservoir gap, small enough to separate truly distinct rivers. The shared `assembleRiverFeatures(byName, boundary, borderLine)` function contains `keepSegment` (PIP + border-proximity filter), the whitelist bypass, and the top-10 slice — it is called by both `fetchRivers` (OSM) and `fetchRiversNHD`.
 
 **River whitelist (`src/data/riverWhitelist.js`):** `RIVER_WHITELIST` is an array of lowercase base names (e.g. `'jordan'` matches "Jordan River"). `isWhitelisted(name)` is imported by both `fetch-state-data.js` and `StateMap.jsx`. Whitelisted rivers bypass: (1) the per-chain 0.05° MIN_SEG_LEN filter, (2) the post-map total-length filter, and (3) the top-10 ranking slice — they are separated from other rivers before the slice and always included. Add rivers here when they are historically/culturally significant but have short or heavily OSM-fragmented Utah segments (Jordan River has 200+ tiny OSM way segments that don't connect well at CHAIN_TOL=0.002°).
 

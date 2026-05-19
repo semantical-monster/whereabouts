@@ -1,2 +1,4 @@
 node_modules/
 dist/
+scripts/data/nhd_states/
+scripts/data/nhd_tmp/

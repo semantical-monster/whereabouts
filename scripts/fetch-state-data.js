@@ -15,8 +15,10 @@
  *         node scripts/fetch-state-data.js Utah          ← single state
  *         node scripts/fetch-state-data.js Utah Colorado ← subset
  *         node scripts/fetch-state-data.js --parks-only  ← refresh parks, preserve other data
- *         node scripts/fetch-state-data.js --rivers-only ← refresh rivers, preserve other data
+ *         node scripts/fetch-state-data.js --rivers-only ← refresh rivers via OSM Overpass
  *         node scripts/fetch-state-data.js --peaks-only  ← refresh peaks, preserve other data
+ *         node scripts/fetch-state-data.js --rivers-nhd  ← refresh rivers from local NHD data
+ *           Requires pre-extracted GeoJSON: python3 scripts/extract_nhd_flowlines.py
  */
 
 import { writeFileSync, mkdirSync, readFileSync } from 'fs';
@@ -145,7 +147,7 @@ const OVERPASS_ENDPOINTS = [
 
 const OVERPASS_HEADERS = {
   'Content-Type': 'application/x-www-form-urlencoded',
-  'User-Agent': 'GeoNerd/1.0 (educational geography quiz; contact: dtroxler017@gmail.com)',
+  'User-Agent': 'Whereabouts/1.0 (educational geography quiz; contact: dtroxler017@gmail.com)',
   'Accept': 'application/json',
 };
 
@@ -259,6 +261,10 @@ function segLength(coords) {
 // CHAIN_TOL: how close endpoints must be (degrees) to count as connected.
 // 0.002° ≈ 220 m — generous enough to bridge small OSM node gaps.
 const CHAIN_TOL = 0.002;
+// Maximum endpoint-to-endpoint distance to connect two chains into the same
+// component (degrees). ~35 miles. Large enough to bridge a TVA/USACE reservoir
+// gap; small enough to separate truly distinct rivers in different parts of a state.
+const GAP_THRESHOLD = 0.5;
 
 function ptClose(a, b) {
   return Math.abs(a[0] - b[0]) < CHAIN_TOL && Math.abs(a[1] - b[1]) < CHAIN_TOL;
@@ -293,44 +299,66 @@ function chainSegments(segs) {
   return chains;
 }
 
-// Spatial coherence filter: after chaining, drop chains that are both short
-// relative to the dominant chain AND geographically isolated from it.
+// Connected component clustering: group chains whose endpoints are within
+// GAP_THRESHOLD of each other, then return only the dominant component
+// (highest total chain length).
 //
-// This removes false-attribution blips caused by rivers that share a name with
-// an unrelated waterway elsewhere in the state bounding box (e.g. Elk River in
-// NE Tennessee is actually the VA/NC Elk River bleeding across the bbox border;
-// the real TN Elk River is in Middle/South TN).
-//
-// Algorithm:
-//   anchor = the longest chain (most authoritative piece of the river)
-//   For every other chain:
-//     - if chain_length / anchor_length >= RATIO → keep (geographically substantial)
-//     - if distance from chain center to anchor center <= DIST → keep (close enough)
-//     - otherwise → drop (isolated blip)
-//
-// RATIO=0.20 / DIST=1.5° keeps Tennessee River's genuine West TN section (74%,
-// ~3.4° away) while dropping the Elk River NE-TN false cluster (17%, ~4.5° away).
-// Close-but-short chains like the Mississippi River's small northern TN segment
-// (7%, 0.6°) are also preserved.
-function coherentChains(chains) {
+// Handles two cases under a single algorithm:
+//   A) Name collision (e.g. Willow River MN — three unrelated rivers in different
+//      parts of the state): dominant component < 60% of total → keep only it,
+//      discard the scattered fragments.
+//   B) Single river with a data gap (e.g. Holston River TN — Cherokee Lake covers
+//      its OSM course): dominant component ≥ 60% of total → the two real segments
+//      are close enough to be in one component, outliers (cross-border bleed) are
+//      not.
+// In both cases the action is identical: return the dominant component's chains.
+function dominantComponent(chains) {
   if (chains.length <= 1) return chains;
+  const n = chains.length;
 
-  const RATIO = 0.20;
-  const DIST  = 1.5; // degrees
+  // Endpoints of each chain
+  const eps = chains.map(c => [c[0], c[c.length - 1]]);
 
+  // Build adjacency list: edge when any endpoint pair is within GAP_THRESHOLD
+  const adj = Array.from({ length: n }, () => []);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let minDist = Infinity;
+      for (const p of eps[i])
+        for (const q of eps[j]) {
+          const d = Math.sqrt((p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2);
+          if (d < minDist) minDist = d;
+        }
+      if (minDist < GAP_THRESHOLD) { adj[i].push(j); adj[j].push(i); }
+    }
+  }
+
+  // BFS connected components
+  const visited = new Uint8Array(n);
+  const components = [];
+  for (let s = 0; s < n; s++) {
+    if (visited[s]) continue;
+    const comp = [];
+    const queue = [s];
+    visited[s] = 1;
+    while (queue.length) {
+      const v = queue.shift();
+      comp.push(v);
+      for (const u of adj[v]) { if (!visited[u]) { visited[u] = 1; queue.push(u); } }
+    }
+    components.push(comp);
+  }
+
+  if (components.length === 1) return chains;
+
+  // Return only the dominant component (highest total chain length)
   const lens = chains.map(segLength);
-  const maxLen = Math.max(...lens);
-  const anchor = chains[lens.indexOf(maxLen)];
-  // Geographic center of the anchor chain (average of all coords)
-  const anchorCx = anchor.reduce((s, p) => s + p[0], 0) / anchor.length;
-  const anchorCy = anchor.reduce((s, p) => s + p[1], 0) / anchor.length;
-
-  return chains.filter((c, i) => {
-    if (lens[i] / maxLen >= RATIO) return true;
-    const cx = c.reduce((s, p) => s + p[0], 0) / c.length;
-    const cy = c.reduce((s, p) => s + p[1], 0) / c.length;
-    return Math.sqrt((cx - anchorCx) ** 2 + (cy - anchorCy) ** 2) <= DIST;
-  });
+  let best = null, bestLen = -1;
+  for (const comp of components) {
+    const len = comp.reduce((s, i) => s + lens[i], 0);
+    if (len > bestLen) { bestLen = len; best = comp; }
+  }
+  return best.map(i => chains[i]);
 }
 
 // ── Feature fetchers ─────────────────────────────────────────────────────────
@@ -376,54 +404,55 @@ out body;`);
   return { type: 'FeatureCollection', features };
 }
 
-// Fetch all river way segments in the state bbox, collect every segment per
-// river name, filter to in-state + border segments using turf, chain
-// consecutive segments into continuous LineStrings, and return a
-// MultiLineString (or LineString when only one chain exists) per river.
-//
-// We use way-based queries rather than OSM waterway relations because
-// (a) the openstreetmap.fr Overpass mirror doesn't support area-based
-// relation lookups, and (b) relation fetching would require N round-trips
-// per state (one per relation ID). The way-based approach with full-segment
-// collection achieves the same visual result in a single query per state.
+// NHD ArcGIS REST was investigated as an alternative data source (2025-05) but proved
+// unsuitable: 27s+ latency per bbox query, 51K+ features for large states (no per-state
+// filter at the API level), outStatistics+geometry returns HTTP 400, and the `mainpath`
+// field is always 0. OSM Overpass with segment chaining remains the source.
+
 async function fetchRivers(stateName, stateFips) {
   const [s, w, n, e] = STATE_BBOX[stateName] || [];
   if (!s) return empty();
 
-  const data = await overpass(`[out:json][timeout:90];
+  const data = await overpass(`[out:json][timeout:60];
 way["waterway"="river"]["name"](${s},${w},${n},${e});
-out geom;`);
+(._;>;);
+out body;`);
 
-  // Collect ALL way segments per river name (not just the longest)
+  // Build a node-id → {lon,lat} lookup
+  const nodes = new Map();
+  for (const el of data.elements || []) {
+    if (el.type === 'node') nodes.set(el.id, { lon: el.lon, lat: el.lat });
+  }
+
+  // Collect all way segments per river name
   const byName = new Map();
-  for (const el of (data.elements || [])) {
+  for (const el of data.elements || []) {
+    if (el.type !== 'way') continue;
     const name = el.tags?.name;
-    if (!name || !el.geometry?.length) continue;
-    // Normalize antimeridian-crossing coordinates (OSM may encode Aleutian ways with lon > 180)
-    const coords = el.geometry.map(p => {
-      let lon = p.lon;
-      if (lon > 180) lon -= 360;
-      if (lon < -180) lon += 360;
-      return [lon, p.lat];
-    });
-    // Alaska: drop segments in the far-western Aleutians (west of -170°) — no named rivers
-    // exist there and they cause extreme Mercator distortion before projection is swapped.
+    if (!name) continue;
+    const pts = (el.nodes || []).map(id => nodes.get(id)).filter(Boolean);
+    if (pts.length < 2) continue;
+    // Alaska: normalize longitudes crossing antimeridian, drop far Aleutians
     if (stateFips === '02') {
-      const midLon = coords[Math.floor(coords.length / 2)][0];
+      for (const p of pts) {
+        if (p.lon > 0) p.lon -= 360;
+        if (p.lon < -180) p.lon += 360;
+      }
+      const midLon = pts[Math.floor(pts.length / 2)].lon;
       if (midLon < -170) continue;
     }
-    const segLen = coordLengthDeg(el.geometry);
+    const segLen = coordLengthDeg(pts);
+    const coords = pts.map(p => [p.lon, p.lat]);
     const prev = byName.get(name);
     if (!prev) {
       byName.set(name, { total: segLen, segments: [coords] });
     } else {
-      byName.set(name, { total: prev.total + segLen, segments: [...prev.segments, coords] });
+      prev.total += segLen;
+      prev.segments.push(coords);
     }
   }
 
-  // Build turf-compatible state boundary for segment filtering
   const boundary = getStateBoundary(stateFips);
-  // Exterior rings of the state polygon → MultiLineString for border proximity test
   let borderLine = null;
   if (boundary?.geometry) {
     const geom = boundary.geometry;
@@ -433,20 +462,53 @@ out geom;`);
     borderLine = rings.length === 1 ? turf.lineString(rings[0]) : turf.multiLineString(rings);
   }
 
-  const BORDER_TOL = 0.05; // degrees — river midpoint within this of border → keep
+  return assembleRiverFeatures(byName, boundary, borderLine);
+}
 
-  // Midpoint-based filter: endpoint-based checks included long cross-border ways
-  // (e.g. a Mississippi River way with one endpoint inside TN and the other far
-  // into Arkansas). Using only the midpoint avoids this: cross-border segments
-  // have their midpoint outside the state, so they're dropped or caught only
-  // by the border-proximity check when they truly run along the border.
+// Convert a river entry to a GeoJSON Feature (chain + noise-filter + simplify).
+// Returns null if the river fails the length gate (and is not whitelisted).
+// Module-level so both fetchRivers (OSM) and fetchRiversNHD share it.
+function makeRiverFeature(name, segments) {
+  if (!segments.length) return null;
+  const chains = dominantComponent(chainSegments(segments));
+  const MIN_SEG_LEN = 0.05;
+  // Whitelisted rivers skip the per-chain length filter — they may be heavily
+  // fragmented in OSM (e.g. Jordan River: 200+ tiny urban segments in Salt Lake).
+  const meaningful = isWhitelisted(name)
+    ? chains
+    : chains.filter(c => segLength(c) >= MIN_SEG_LEN);
+  // Fallback: if every chain is below threshold keep the longest so the total-length
+  // check below (not the whitelist path) can decide whether to drop the river.
+  const toUse = meaningful.length
+    ? meaningful
+    : [chains.reduce((a, b) => segLength(a) >= segLength(b) ? a : b)];
+  const simplified = toUse.map(c => simplify(c, 60));
+  const feature = {
+    type: 'Feature',
+    properties: { name, segment_count: simplified.length },
+    geometry: simplified.length === 1
+      ? { type: 'LineString',      coordinates: simplified[0] }
+      : { type: 'MultiLineString', coordinates: simplified },
+  };
+  // Post-map total-length gate: drop invisible sub-pixel stubs.
+  // Whitelisted rivers always pass regardless of total length.
+  if (!isWhitelisted(name)) {
+    const total = simplified.reduce((s, c) => s + segLength(c), 0);
+    if (total < 0.05) return null;
+  }
+  return feature;
+}
+
+// Shared final assembly step for both fetchRivers and fetchRiversNHD.
+// Applies keepSegment PIP filter, whitelist bypass, top-10 slice, makeRiverFeature.
+function assembleRiverFeatures(byName, boundary, borderLine) {
+  const BORDER_TOL = 0.05;
+
   function keepSegment(coords) {
     if (coords.length < 2) return false;
     if (!boundary) return true;
     const mid = turf.point(coords[Math.floor(coords.length / 2)]);
     if (turf.booleanPointInPolygon(mid, boundary)) return true;
-    // turf.pointToLineDistance only accepts LineString — handle MultiPolygon states
-    // (Michigan, Florida, Washington, Hawaii...) by iterating their rings individually.
     if (borderLine) {
       const rings = borderLine.geometry.type === 'MultiLineString'
         ? borderLine.geometry.coordinates
@@ -459,41 +521,6 @@ out geom;`);
     return false;
   }
 
-  // Convert a river entry to a GeoJSON Feature (chain + noise-filter + simplify).
-  // Returns null if the river fails the length gate (and is not whitelisted).
-  function makeRiverFeature(name, segments) {
-    if (!segments.length) return null;
-    const chains = coherentChains(chainSegments(segments));
-    const MIN_SEG_LEN = 0.05;
-    // Whitelisted rivers skip the per-chain length filter — they may be heavily
-    // fragmented in OSM (e.g. Jordan River: 200+ tiny urban segments in Salt Lake).
-    const meaningful = isWhitelisted(name)
-      ? chains
-      : chains.filter(c => segLength(c) >= MIN_SEG_LEN);
-    // Fallback: if every chain is below threshold keep the longest so the total-length
-    // check below (not the whitelist path) can decide whether to drop the river.
-    const toUse = meaningful.length
-      ? meaningful
-      : [chains.reduce((a, b) => segLength(a) >= segLength(b) ? a : b)];
-    const simplified = toUse.map(c => simplify(c, 60));
-    const feature = {
-      type: 'Feature',
-      properties: { name, segment_count: simplified.length },
-      geometry: simplified.length === 1
-        ? { type: 'LineString',      coordinates: simplified[0] }
-        : { type: 'MultiLineString', coordinates: simplified },
-    };
-    // Post-map total-length gate: drop invisible sub-pixel stubs.
-    // Whitelisted rivers always pass regardless of total length.
-    if (!isWhitelisted(name)) {
-      const fchains = simplified;
-      const total = fchains.reduce((s, c) => s + segLength(c), 0);
-      if (total < 0.05) return null;
-    }
-    return feature;
-  }
-
-  // Filter each river's raw segments through keepSegment, then build features.
   const candidates = [...byName.entries()]
     .map(([name, { total, segments }]) => ({
       name, total, filtered: segments.filter(keepSegment),
@@ -521,6 +548,56 @@ out geom;`);
     type: 'FeatureCollection',
     features: [...whitelistedFeatures, ...otherFeatures],
   };
+}
+
+// ── NHD local river fetch (--rivers-nhd) ─────────────────────────────────────
+// Reads pre-extracted per-state GeoJSON from scripts/data/nhd_states/{slug}.geojson.
+// Run python3 scripts/extract_nhd_flowlines.py to build those files.
+// NHD advantage over OSM: fcode 39004 (artificial path) fills reservoir gaps so
+// rivers like the Mississippi are continuous through every Twin Cities dam pool.
+
+async function fetchRiversNHD(stateName, stateFips) {
+  const stateSlug = slug(stateName);
+  const stateFile = join(__dirname, `../scripts/data/nhd_states/${stateSlug}.geojson`);
+
+  let fc;
+  try {
+    fc = JSON.parse(readFileSync(stateFile, 'utf8'));
+  } catch {
+    throw new Error(
+      `NHD state file not found: ${stateFile}\n` +
+      `  Run: python3 scripts/extract_nhd_flowlines.py "${stateName}"`
+    );
+  }
+
+  // Build byName map — each feature is already a LineString (decomposed by extraction script)
+  const byName = new Map();
+  for (const f of fc.features) {
+    const name = f.properties?.gnis_name;
+    if (!name || f.geometry?.type !== 'LineString') continue;
+    const coords = f.geometry.coordinates;
+    if (!coords || coords.length < 2) continue;
+    const segLen = segLength(coords);
+    const prev = byName.get(name);
+    if (!prev) {
+      byName.set(name, { total: segLen, segments: [coords] });
+    } else {
+      prev.total += segLen;
+      prev.segments.push(coords);
+    }
+  }
+
+  const boundary = getStateBoundary(stateFips);
+  let borderLine = null;
+  if (boundary?.geometry) {
+    const geom = boundary.geometry;
+    const rings = geom.type === 'Polygon'
+      ? [geom.coordinates[0]]
+      : geom.coordinates.map(p => p[0]);
+    borderLine = rings.length === 1 ? turf.lineString(rings[0]) : turf.multiLineString(rings);
+  }
+
+  return assembleRiverFeatures(byName, boundary, borderLine);
 }
 
 // ── NPS Parks (official NPS ArcGIS FeatureServer) ────────────────────────────
@@ -587,7 +664,7 @@ let NPS_PARKS_BY_FIPS = null;
 async function buildNPSParksMap() {
   process.stdout.write('Downloading NPS park boundaries… ');
   const res = await fetch(NPS_PARKS_URL, {
-    headers: { 'User-Agent': 'GeoNerd/1.0 (educational geography quiz)' },
+    headers: { 'User-Agent': 'Whereabouts/1.0 (educational geography quiz)' },
   });
   if (!res.ok) throw new Error(`NPS API HTTP ${res.status}`);
   const data = await res.json();
@@ -663,7 +740,7 @@ async function fetchCities(stateName) {
     process.stdout.write('(downloading Natural Earth cities…) ');
     const res = await fetch(
       'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_populated_places.geojson',
-      { headers: { 'User-Agent': 'GeoNerd/1.0' } },
+      { headers: { 'User-Agent': 'Whereabouts/1.0' } },
     );
     if (!res.ok) throw new Error(`Natural Earth HTTP ${res.status}`);
     NE_CITIES = (await res.json()).features;
@@ -739,6 +816,7 @@ async function main() {
   const parksOnly  = process.argv.includes('--parks-only');
   const riversOnly = process.argv.includes('--rivers-only');
   const peaksOnly  = process.argv.includes('--peaks-only');
+  const riversNhd  = process.argv.includes('--rivers-nhd');
   const requested  = process.argv.slice(2).filter(a => !a.startsWith('--'));
   let entries = Object.entries(STATE_FIPS);
   if (requested.length) {
@@ -751,8 +829,8 @@ async function main() {
     }
   }
 
-  // Download NPS park data only when needed (not for rivers-only or peaks-only runs)
-  if (!riversOnly && !peaksOnly) {
+  // Download NPS park data only when needed (not for rivers-only / rivers-nhd / peaks-only runs)
+  if (!riversOnly && !riversNhd && !peaksOnly) {
     NPS_PARKS_BY_FIPS = await buildNPSParksMap();
   }
 
@@ -790,8 +868,26 @@ async function main() {
           `segs:[${rivers.features.map(f => f.properties.segment_count).join(',')}] ` +
           `(peaks/parks/cities preserved)`
         );
-        if (i < entries.length - 1) await sleep(10000); // longer gap to avoid Overpass rate-limiting
+        if (i < entries.length - 1) await sleep(10000); // Overpass rate limit
         continue;
+      }
+
+      // ── NHD rivers mode ──────────────────────────────────────────────────
+      if (riversNhd) {
+        const existing = readExistingFeatures(name);
+        if (!existing) { console.log('SKIP (no existing file)'); continue; }
+        const rivers = await fetchRiversNHD(name, fips).catch(e => {
+          errors.push(`${name} rivers: ${e.message}`); return empty();
+        });
+        writeStateFile(fips, name, {
+          rivers, peaks: existing.peaks, parks: existing.parks, cities: existing.cities,
+        });
+        console.log(
+          `rivers:${String(rivers.features.length).padStart(2)} ` +
+          `segs:[${rivers.features.map(f => f.properties.segment_count).join(',')}] ` +
+          `(peaks/parks/cities preserved)`
+        );
+        continue; // no sleep — reads local files
       }
 
       // ── Peaks-only mode ──────────────────────────────────────────────────

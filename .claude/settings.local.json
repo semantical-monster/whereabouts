@@ -53,7 +53,20 @@
       "Bash(npm ls *)",
       "Bash(npm install *)",
       "Bash(tee /tmp/rivers-all-50.log)",
-      "Bash(xargs ls -la)"
+      "Bash(xargs ls -la)",
+      "Bash(curl *)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); f=d.get\\('features',[]\\); print\\('features:',len\\(f\\)\\); print\\('props:', f[0]['properties'] if f else 'none'\\); print\\('geom type:', f[0]['geometry']['type'] if f else 'none'\\); print\\('coords sample:', f[0]['geometry']['coordinates'][:3] if f else 'none'\\)\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); feats=d.get\\('features',[]\\); print\\('RI rivers by segment count:'\\); [print\\(f['attributes']['GNIS_NAME'], f['attributes']['cnt']\\) for f in feats[:10]]\")",
+      "Bash(echo \"curl_exit:$?\")",
+      "Bash(ogr2ogr --version)",
+      "Bash(brew install *)",
+      "Bash(brew tap *)",
+      "Bash(brew list *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 *)",
+      "Bash(echo \"Download started in background, PID: $!\")",
+      "Bash(unzip -q NHD_H_Rhode_Island_State_GDB.zip)",
+      "Bash(unzip -q NHD_H_Minnesota_State_GDB.zip '*.gdb/*')"
     ]
   }
 }
