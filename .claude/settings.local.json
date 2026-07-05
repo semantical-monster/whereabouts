@@ -66,7 +66,10 @@
       "Bash(python3 *)",
       "Bash(echo \"Download started in background, PID: $!\")",
       "Bash(unzip -q NHD_H_Rhode_Island_State_GDB.zip)",
-      "Bash(unzip -q NHD_H_Minnesota_State_GDB.zip '*.gdb/*')"
+      "Bash(unzip -q NHD_H_Minnesota_State_GDB.zip '*.gdb/*')",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
