@@ -205,7 +205,7 @@ export default function StateMap() {
     zoomTransformRef.current = d3.zoomIdentity;
     setZoomScale(1);
     if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
-    if (activeCategory === 'peaks') {
+    if (['peaks', 'parks', 'cities'].includes(activeCategory)) {
       setShowHint(true);
       hintTimerRef.current = setTimeout(() => setShowHint(false), 4000);
     } else {
@@ -282,11 +282,11 @@ export default function StateMap() {
       for (let y = 18; y < H; y += 22)
         svg.append('circle').attr('cx', x).attr('cy', y).attr('r', 0.9).attr('fill', 'rgba(0,0,0,0.07)');
 
-    // ── Peaks layer — uses a zoom-group wrapping underlay + markers ───────────
-    if (activeCategory === 'peaks') {
+    // ── Zoom layer — peaks, parks, and cities use a zoom-group ──────────────
+    if (['peaks', 'parks', 'cities'].includes(activeCategory)) {
       const zoomGroup = svg.append('g').attr('id', 'zoom-group').attr('clip-path', 'url(#map-clip)');
 
-      // County underlay inside zoom-group so it pans/zooms with the peaks
+      // County underlay inside zoom-group so it pans/zooms with the markers
       zoomGroup.append('g').selectAll('path')
         .data(stateFeatures)
         .join('path')
@@ -296,36 +296,80 @@ export default function StateMap() {
         .attr('stroke-width', 0.6)
         .attr('pointer-events', 'none');
 
-      const peakGroup = zoomGroup.append('g');
+      const markerGroup = zoomGroup.append('g');
       const k0 = zoomTransformRef.current.k;
-      const size = 8;
 
-      categoryFeatures.forEach(f => {
-        const name = f.properties.name;
-        const [lon, lat] = f.geometry.coordinates;
-        const [px, py] = projection([lon, lat]);
-        const isCorrect = correct.has(name);
-        const isHovered = hoveredId === name;
+      if (activeCategory === 'peaks') {
+        const size = 8;
+        categoryFeatures.forEach(f => {
+          const name = f.properties.name;
+          const [lon, lat] = f.geometry.coordinates;
+          const [px, py] = projection([lon, lat]);
+          const isCorrect = correct.has(name);
+          const isHovered = hoveredId === name;
+          // Triangle centered at origin so counter-scale transform keeps it pixel-fixed
+          const tri = `M 0,${-size} L ${size * 0.8},${size * 0.5} L ${-size * 0.8},${size * 0.5} Z`;
+          markerGroup.append('path')
+            .attr('d', tri)
+            .attr('transform', `translate(${px},${py}) scale(${1 / k0})`)
+            .attr('fill', isCorrect ? T.goldBright : isHovered ? 'rgba(224,168,48,0.7)' : '#5a7a9a')
+            .attr('stroke', isCorrect ? T.textPrimary : '#2a4a6a')
+            .attr('stroke-width', 1.2)
+            .attr('data-id', name)
+            .attr('data-px', px)
+            .attr('data-py', py)
+            .style('cursor', 'crosshair')
+            .on('mouseover', function() { setHoveredId(name); })
+            .on('mouseout', function() { setHoveredId(null); })
+            .on('click', function() { handleNonCountyClick(name); });
+        });
+      } else if (activeCategory === 'parks') {
+        categoryFeatures.forEach(f => {
+          const name = f.properties.name;
+          const [lon, lat] = f.geometry.coordinates;
+          const [px, py] = projection([lon, lat]);
+          const isCorrect = correct.has(name);
+          const isHovered = hoveredId === name;
+          markerGroup.append('circle')
+            .attr('cx', 0).attr('cy', 0).attr('r', 10)
+            .attr('transform', `translate(${px},${py}) scale(${1 / k0})`)
+            .attr('fill', isCorrect ? 'rgba(224,168,48,0.5)' : isHovered ? 'rgba(74,106,132,0.7)' : 'rgba(74,106,132,0.4)')
+            .attr('stroke', isCorrect ? T.goldBright : '#2a4a6a')
+            .attr('stroke-width', isCorrect ? 2 : 1.5)
+            .attr('data-id', name)
+            .attr('data-px', px)
+            .attr('data-py', py)
+            .style('cursor', 'crosshair')
+            .on('mouseover', function() { setHoveredId(name); })
+            .on('mouseout', function() { setHoveredId(null); })
+            .on('click', function() { handleNonCountyClick(name); });
+        });
+      } else if (activeCategory === 'cities') {
+        categoryFeatures.forEach(f => {
+          const name = f.properties.name;
+          const pop = f.properties.pop;
+          const [lon, lat] = f.geometry.coordinates;
+          const [px, py] = projection([lon, lat]);
+          const isCorrect = correct.has(name);
+          const isHovered = hoveredId === name;
+          const r = cityRadius(pop);
+          markerGroup.append('circle')
+            .attr('cx', 0).attr('cy', 0).attr('r', r)
+            .attr('transform', `translate(${px},${py}) scale(${1 / k0})`)
+            .attr('fill', isCorrect ? T.goldBright : isHovered ? '#6a9aaa' : '#4a6a84')
+            .attr('stroke', '#0a1420')
+            .attr('stroke-width', 1)
+            .attr('data-id', name)
+            .attr('data-px', px)
+            .attr('data-py', py)
+            .style('cursor', 'crosshair')
+            .on('mouseover', function() { setHoveredId(name); })
+            .on('mouseout', function() { setHoveredId(null); })
+            .on('click', function() { handleNonCountyClick(name); });
+        });
+      }
 
-        // Triangle centered at origin so counter-scale transform keeps it pixel-fixed
-        const tri = `M 0,${-size} L ${size * 0.8},${size * 0.5} L ${-size * 0.8},${size * 0.5} Z`;
-        peakGroup.append('path')
-          .attr('d', tri)
-          .attr('transform', `translate(${px},${py}) scale(${1 / k0})`)
-          .attr('fill', isCorrect ? T.goldBright : isHovered ? 'rgba(224,168,48,0.7)' : '#5a7a9a')
-          .attr('stroke', isCorrect ? T.textPrimary : '#2a4a6a')
-          .attr('stroke-width', 1.2)
-          .attr('data-id', name)
-          .attr('data-px', px)
-          .attr('data-py', py)
-          .style('cursor', 'crosshair')
-          .on('mouseover', function() { setHoveredId(name); })
-          .on('mouseout', function() { setHoveredId(null); })
-          .on('click', function() { handleNonCountyClick(name); });
-
-      });
-
-      // d3.zoom: scroll-wheel zoom + pan, peaks mode only
+      // d3.zoom: scroll-wheel zoom + pan for peaks, parks, and cities
       const zoom = d3.zoom()
         .scaleExtent([1, 50])
         .translateExtent([[0, 0], [W, H]])
@@ -336,8 +380,8 @@ export default function StateMap() {
 
           zoomGroup.attr('transform', t);
 
-          // Counter-scale each triangle so it stays pixel-fixed regardless of zoom level
-          peakGroup.selectAll('path[data-id]').attr('transform', function() {
+          // Counter-scale each marker so it stays pixel-fixed regardless of zoom level
+          markerGroup.selectAll('[data-id]').attr('transform', function() {
             const px = +d3.select(this).attr('data-px');
             const py = +d3.select(this).attr('data-py');
             return `translate(${px},${py}) scale(${1 / t.k})`;
@@ -355,7 +399,7 @@ export default function StateMap() {
       // Restore previous zoom transform (prevents snap-back to 1x when a chip is placed)
       svg.call(zoom.transform, zoomTransformRef.current);
     } else {
-      // ── County underlay (non-peaks, non-county modes) ──────────────────────
+      // ── County underlay (rivers and counties modes) ────────────────────────
       if (activeCategory !== 'counties') {
         svg.append('g').selectAll('path')
           .data(stateFeatures)
@@ -466,51 +510,6 @@ export default function StateMap() {
         });
       }
 
-      // ── Parks layer ─────────────────────────────────────────────────────────
-      if (activeCategory === 'parks') {
-        const parkGroup = svg.append('g');
-        categoryFeatures.forEach(f => {
-          const name = f.properties.name;
-          const [lon, lat] = f.geometry.coordinates;
-          const [px, py] = projection([lon, lat]);
-          const isCorrect = correct.has(name);
-          const isHovered = hoveredId === name;
-          parkGroup.append('circle')
-            .attr('cx', px).attr('cy', py).attr('r', 10)
-            .attr('fill', isCorrect ? 'rgba(224,168,48,0.5)' : isHovered ? 'rgba(74,106,132,0.7)' : 'rgba(74,106,132,0.4)')
-            .attr('stroke', isCorrect ? T.goldBright : '#2a4a6a')
-            .attr('stroke-width', isCorrect ? 2 : 1.5)
-            .attr('data-id', name)
-            .style('cursor', 'crosshair')
-            .on('mouseover', function() { setHoveredId(name); })
-            .on('mouseout', function() { setHoveredId(null); })
-            .on('click', function() { handleNonCountyClick(name); });
-        });
-      }
-
-      // ── Cities layer ─────────────────────────────────────────────────────────
-      if (activeCategory === 'cities') {
-        const cityGroup = svg.append('g');
-        categoryFeatures.forEach(f => {
-          const name = f.properties.name;
-          const pop = f.properties.pop;
-          const [lon, lat] = f.geometry.coordinates;
-          const [px, py] = projection([lon, lat]);
-          const isCorrect = correct.has(name);
-          const isHovered = hoveredId === name;
-          const r = cityRadius(pop);
-          cityGroup.append('circle')
-            .attr('cx', px).attr('cy', py).attr('r', r)
-            .attr('fill', isCorrect ? T.goldBright : isHovered ? '#6a9aaa' : '#4a6a84')
-            .attr('stroke', '#0a1420')
-            .attr('stroke-width', 1)
-            .attr('data-id', name)
-            .style('cursor', 'crosshair')
-            .on('mouseover', function() { setHoveredId(name); })
-            .on('mouseout', function() { setHoveredId(null); })
-            .on('click', function() { handleNonCountyClick(name); });
-        });
-      }
     }
 
     // Border is always drawn outside the zoom-group so it stays fixed
@@ -688,8 +687,8 @@ export default function StateMap() {
             style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'block' }}
           />
 
-          {/* Scroll hint — peaks mode only, dismisses on first scroll or after 4s */}
-          {activeCategory === 'peaks' && showHint && (
+          {/* Scroll hint — peaks/parks/cities mode, dismisses on first scroll or after 4s */}
+          {['peaks', 'parks', 'cities'].includes(activeCategory) && showHint && (
             <div style={{
               position: 'absolute', bottom: 36, left: '50%', transform: 'translateX(-50%)',
               background: 'rgba(15,25,35,0.9)', border: '1px solid rgba(138,172,196,0.3)',
@@ -701,8 +700,8 @@ export default function StateMap() {
             </div>
           )}
 
-          {/* Reset zoom button — peaks mode, only when zoomed in */}
-          {activeCategory === 'peaks' && zoomScale > 1.1 && (
+          {/* Reset zoom button — peaks/parks/cities mode, only when zoomed in */}
+          {['peaks', 'parks', 'cities'].includes(activeCategory) && zoomScale > 1.1 && (
             <button
               onClick={() => {
                 if (zoomRef.current && svgRef.current) {
