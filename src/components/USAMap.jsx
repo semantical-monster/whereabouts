@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import * as topojson from 'topojson-client';
+import polylabel from 'polylabel';
 import { useQuizStore } from '../store/quizStore';
 import { T } from '../styles/theme';
 
@@ -102,19 +103,39 @@ export default function USAMap() {
       .attr('stroke', T.border)
       .attr('stroke-width', 0.8);
 
-    // Abbreviation labels for states with enough screen area
+    // Abbreviation labels — pole of inaccessibility via polylabel for interior placement
     states.features.forEach(d => {
       const fips = d.id.toString().padStart(2, '0');
       const abbr = STATE_ABBR[fips];
       if (!abbr) return;
-      const centroid = path.centroid(d);
-      if (!centroid || isNaN(centroid[0])) return;
       const area = path.area(d);
-      if (area < 800) return; // skip tiny states
+      if (area < 400) return; // skip states too small to label
+
+      const geom = d.geometry;
+      const outerRings = geom.type === 'Polygon'
+        ? [geom.coordinates[0]]
+        : geom.coordinates.map(poly => poly[0]); // one outer ring per polygon part
+
+      // Project each ring to screen space; keep only fully-projected rings
+      const projectedRings = outerRings
+        .map(ring => ring.map(coord => projection(coord)).filter(Boolean))
+        .filter(ring => ring.length >= 3);
+      if (projectedRings.length === 0) return;
+
+      // Pick the largest ring (by screen area) — main landmass for MI, LA, etc.
+      const largestRing = projectedRings.reduce((best, ring) => {
+        const a = Math.abs(d3.polygonArea(ring));
+        return a > best.a ? { ring, a } : best;
+      }, { ring: projectedRings[0], a: 0 }).ring;
+
+      let pos;
+      try { pos = polylabel([largestRing], 1.0); } catch { return; }
+      if (!pos || isNaN(pos[0])) return;
+
       svg.append('text')
-        .attr('x', centroid[0]).attr('y', centroid[1] + 4)
+        .attr('x', pos[0]).attr('y', pos[1] + 4)
         .attr('text-anchor', 'middle')
-        .attr('font-size', area > 6000 ? '11px' : '9px')
+        .attr('font-size', area > 6000 ? '11px' : area > 1500 ? '9px' : '7px')
         .attr('font-family', 'Raleway, sans-serif')
         .attr('font-weight', '600')
         .attr('fill', '#0a1420')
@@ -126,7 +147,7 @@ export default function USAMap() {
 
   return (
     <>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', width: '90vw', maxWidth: 1200 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap', width: '90vw', maxWidth: 1200 }}>
         {CATEGORIES.map(({ key, label }) => (
           <button
             key={key}
