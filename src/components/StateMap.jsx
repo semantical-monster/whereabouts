@@ -25,14 +25,29 @@ const ZOOM_HINTS = {
 };
 
 function FeatureChip({ id, label, onDragStart, onDragEnd, onChipClick, placed, wrong, selected, held, isTouch, isMobile }) {
+  // Same 'pointerup' + dedup-guarded 'click' pattern as the map's SVG hit-targets
+  // (see withDedupe in StateMap) — belt-and-suspenders in case chip taps turn out
+  // to have the same iOS Safari click-reliability issue. Must run before the
+  // `placed` early return below (Rules of Hooks).
+  const lastPointerUpAtRef = useRef(0);
   if (placed) return null;
   const isActive = selected || held;
+  const handleActivate = (event) => {
+    if (event.type === 'pointerup') {
+      lastPointerUpAtRef.current = Date.now();
+      onChipClick(id, event.type);
+      return;
+    }
+    if (Date.now() - lastPointerUpAtRef.current < 500) return;
+    onChipClick(id, event.type);
+  };
   return (
     <div
       draggable={!isTouch}
       onDragStart={isTouch ? undefined : e => onDragStart(e, id)}
       onDragEnd={isTouch ? undefined : onDragEnd}
-      onClick={() => onChipClick(id)}
+      onClick={handleActivate}
+      onPointerUp={handleActivate}
       style={{
         padding: isMobile ? '10px 14px' : '5px 10px',
         minHeight: isMobile ? 40 : undefined,
@@ -121,6 +136,15 @@ export default function StateMap() {
   const [showHint, setShowHint] = useState(false);
   // After a wrong drop, dragEnd must not clear dragId so the chip stays highlighted.
   const keepDragIdRef = useRef(false);
+  // iOS Safari does not reliably synthesize 'click' on non-native SVG elements.
+  // Every map hit-target also listens for 'pointerup', which fires reliably on
+  // every platform; this ref lets the (still-attached) 'click' listener detect
+  // "pointerup already handled this" and skip, so mouse users don't get double
+  // attempts. See withDedupe() in the SVG-build effect below.
+  const lastPointerUpRef = useRef({ id: null, t: 0 });
+  // TEMPORARY on-device debug readout (mobile only) — remove once tap-to-place
+  // is confirmed working on iOS Safari.
+  const [lastEventDebug, setLastEventDebug] = useState('none');
 
   const {
     quizMode,
@@ -216,6 +240,8 @@ export default function StateMap() {
     setTooltip(null);
     setDragId(null);
     keepDragIdRef.current = false;
+    lastPointerUpRef.current = { id: null, t: 0 };
+    setLastEventDebug('none');
   }, [activeState?.fips, activeCategory]);
 
   // Reset zoom transform and manage scroll hint when state or category changes
@@ -256,9 +282,27 @@ export default function StateMap() {
     projectionRef.current = projection;
     const path = d3.geoPath().projection(projection);
 
+    // Every hit-target listens for both 'click' and 'pointerup'. 'pointerup' is the
+    // primary path (fires reliably on iOS Safari for SVG children; 'click' does not).
+    // 'click' stays attached as the desktop/fallback path, guarded so a mouse click
+    // — which dispatches pointerup then click for the same interaction — only counts
+    // once: if a pointerup already ran for this id in the last 500ms, skip the click.
+    const withDedupe = (event, id, fn) => {
+      if (event.type === 'pointerup') {
+        lastPointerUpRef.current = { id, t: Date.now() };
+        setLastEventDebug(`pointerup:${id}`);
+        fn();
+        return;
+      }
+      const last = lastPointerUpRef.current;
+      if (last.id === id && Date.now() - last.t < 500) return;
+      setLastEventDebug(`click:${id}`);
+      fn();
+    };
+
     // Defined inside the effect so it captures fresh selectedId, chipItems etc.
     // The effect re-runs whenever selectedId changes, so no stale closure.
-    const handleNonCountyClick = (featureName) => {
+    const handleNonCountyClick = (event, featureName) => withDedupe(event, featureName, () => {
       if (!selectedId) return;
       const label = chipItems.find(c => c.id === selectedId)?.label?.split(' (')[0] || selectedId;
       const isFirstTry = !everAttemptedRef.current.has(selectedId);
@@ -278,7 +322,7 @@ export default function StateMap() {
         setTimeout(() => setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; }), 1200);
       }
       setSelectedId(null);
-    };
+    });
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
@@ -326,6 +370,33 @@ export default function StateMap() {
         return T.border;
       };
 
+      // Chip-select-then-tap works in both quiz modes (chips are always clickable)
+      // — mirrors handleNonCountyClick below. Do not gate this on isDragDrop: that
+      // previously left click-id mode with no working click handler for counties
+      // (any tap instantly "solved" whatever was clicked, ignoring the selected
+      // chip entirely).
+      const handleCountyActivate = (event, fips) => withDedupe(event, fips, () => {
+        if (!selectedId) return;
+        const county = countyMeta[selectedId];
+        const isFirstTry = !everAttemptedRef.current.has(selectedId);
+        everAttemptedRef.current = new Set([...everAttemptedRef.current, selectedId]);
+        setAttempts(n => n + 1);
+        if (selectedId === fips) {
+          markCorrect(selectedId);
+          addScore(120);
+          if (isFirstTry) setFirstTryCount(n => n + 1);
+          flashFeedback(`✓ ${county?.name}!`, 'correct');
+          setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; });
+        } else {
+          markWrong(selectedId);
+          breakStreak();
+          flashFeedback('Incorrect', 'wrong');
+          setWrongIds(s => new Set([...s, selectedId]));
+          setTimeout(() => setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; }), 1200);
+        }
+        setSelectedId(null);
+      });
+
       zoomGroup.append('g').selectAll('path')
         .data(stateFeatures)
         .join('path')
@@ -336,6 +407,7 @@ export default function StateMap() {
           const fips = d.id.toString().padStart(5, '0');
           return (correct.has(fips) || (!isDragDrop && wrong.has(fips))) ? 1.5 : 0.7;
         })
+        .attr('pointer-events', 'all')
         .style('cursor', isDragDrop ? (selectedId ? 'pointer' : 'copy') : 'pointer')
         .attr('data-id', d => d.id.toString().padStart(5, '0'))
         .on('mouseover', function(event, d) {
@@ -349,33 +421,8 @@ export default function StateMap() {
           setHoveredId(null);
           d3.select(this).attr('fill', getCountyFill(fips));
         })
-        .on('click', function(event, d) {
-          const fips = d.id.toString().padStart(5, '0');
-          // Chip-select-then-click works in both quiz modes (chips are always
-          // clickable) — mirrors handleNonCountyClick below. Do not gate this
-          // on isDragDrop: that previously left click-id mode with no working
-          // click handler for counties (any tap instantly "solved" whatever
-          // was clicked, ignoring the selected chip entirely).
-          if (!selectedId) return;
-          const county = countyMeta[selectedId];
-          const isFirstTry = !everAttemptedRef.current.has(selectedId);
-          everAttemptedRef.current = new Set([...everAttemptedRef.current, selectedId]);
-          setAttempts(n => n + 1);
-          if (selectedId === fips) {
-            markCorrect(selectedId);
-            addScore(120);
-            if (isFirstTry) setFirstTryCount(n => n + 1);
-            flashFeedback(`✓ ${county?.name}!`, 'correct');
-            setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; });
-          } else {
-            markWrong(selectedId);
-            breakStreak();
-            flashFeedback('Incorrect', 'wrong');
-            setWrongIds(s => new Set([...s, selectedId]));
-            setTimeout(() => setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; }), 1200);
-          }
-          setSelectedId(null);
-        });
+        .on('click', function(event, d) { handleCountyActivate(event, d.id.toString().padStart(5, '0')); })
+        .on('pointerup', function(event, d) { handleCountyActivate(event, d.id.toString().padStart(5, '0')); });
     }
 
     // ── Rivers layer ──────────────────────────────────────────────────────────
@@ -385,6 +432,9 @@ export default function StateMap() {
         const name = f.properties.name;
         const isCorrect = correct.has(name);
         const isHovered = hoveredId === name;
+        // Visible styled line — not a hit target. A thin fill:none stroke is a
+        // near-impossible tap target on a phone, so hit-testing lives entirely
+        // on the wide invisible path below.
         riverGroup.append('path')
           .datum(f)
           .attr('d', path)
@@ -393,11 +443,24 @@ export default function StateMap() {
           .attr('stroke-width', isCorrect ? 3 : isHovered ? 4 : 2)
           .attr('stroke-linecap', 'round')
           .attr('stroke-linejoin', 'round')
+          .attr('pointer-events', 'none');
+        // Invisible wide hit path — carries data-id and all interaction handlers.
+        // stroke-width 20 gives a finger-sized tap target along the whole course.
+        riverGroup.append('path')
+          .datum(f)
+          .attr('d', path)
+          .attr('fill', 'none')
+          .attr('stroke', 'transparent')
+          .attr('stroke-width', 20)
+          .attr('stroke-linecap', 'round')
+          .attr('stroke-linejoin', 'round')
+          .attr('pointer-events', 'stroke')
           .attr('data-id', name)
-          .style('cursor', 'crosshair')
+          .style('cursor', 'pointer')
           .on('mouseover', function() { setHoveredId(name); })
           .on('mouseout', function() { setHoveredId(null); })
-          .on('click', function() { handleNonCountyClick(name); });
+          .on('click', (event) => handleNonCountyClick(event, name))
+          .on('pointerup', (event) => handleNonCountyClick(event, name));
       });
     }
 
@@ -426,10 +489,12 @@ export default function StateMap() {
           .attr('data-id', name)
           .attr('data-px', px)
           .attr('data-py', py)
-          .style('cursor', 'crosshair')
+          .attr('pointer-events', 'all')
+          .style('cursor', 'pointer')
           .on('mouseover', function() { setHoveredId(name); })
           .on('mouseout', function() { setHoveredId(null); })
-          .on('click', function() { handleNonCountyClick(name); });
+          .on('click', (event) => handleNonCountyClick(event, name))
+          .on('pointerup', (event) => handleNonCountyClick(event, name));
       });
     } else if (activeCategory === 'parks') {
       categoryFeatures.forEach(f => {
@@ -447,10 +512,12 @@ export default function StateMap() {
           .attr('data-id', name)
           .attr('data-px', px)
           .attr('data-py', py)
-          .style('cursor', 'crosshair')
+          .attr('pointer-events', 'all')
+          .style('cursor', 'pointer')
           .on('mouseover', function() { setHoveredId(name); })
           .on('mouseout', function() { setHoveredId(null); })
-          .on('click', function() { handleNonCountyClick(name); });
+          .on('click', (event) => handleNonCountyClick(event, name))
+          .on('pointerup', (event) => handleNonCountyClick(event, name));
       });
     } else if (activeCategory === 'cities') {
       categoryFeatures.forEach(f => {
@@ -470,10 +537,12 @@ export default function StateMap() {
           .attr('data-id', name)
           .attr('data-px', px)
           .attr('data-py', py)
-          .style('cursor', 'crosshair')
+          .attr('pointer-events', 'all')
+          .style('cursor', 'pointer')
           .on('mouseover', function() { setHoveredId(name); })
           .on('mouseout', function() { setHoveredId(null); })
-          .on('click', function() { handleNonCountyClick(name); });
+          .on('click', (event) => handleNonCountyClick(event, name))
+          .on('pointerup', (event) => handleNonCountyClick(event, name));
       });
     }
 
@@ -538,8 +607,9 @@ export default function StateMap() {
     e.dataTransfer.setData('text/plain', id);
   }, []);
 
-  const handleChipClick = useCallback((id) => {
+  const handleChipClick = useCallback((id, eventType) => {
     setSelectedId(prev => prev === id ? null : id);
+    setLastEventDebug(`chip-${eventType}:${id}`);
   }, []);
 
   const handleDragOver = useCallback((e) => {
@@ -819,6 +889,20 @@ export default function StateMap() {
             )}
           </div>
         </div>
+
+        {/* TEMPORARY on-device debug readout — remove once tap-to-place is
+            confirmed working on iOS Safari. */}
+        {isMobile && (
+          <div style={{ padding: '0 14px 10px' }}>
+            <div style={{
+              fontFamily: 'monospace', fontSize: 9, color: T.textMuted,
+              background: 'rgba(0,0,0,0.2)', borderRadius: 4, padding: '4px 8px',
+              wordBreak: 'break-all',
+            }}>
+              sel: {selectedId ?? 'none'} · last: {lastEventDebug}
+            </div>
+          </div>
+        )}
 
         {/* Auto-solve */}
         {unplaced.length > 0 && (
