@@ -481,6 +481,21 @@ export default function StateMap() {
     const zoom = d3.zoom()
       .scaleExtent([1, 50])
       .translateExtent([[0, 0], [W, H]])
+      .filter((event) => {
+        // Reproduce d3-zoom's own default filter (ignore right-click / ctrl-click,
+        // except pinch-to-zoom sent as wheel+ctrlKey).
+        if (event.button) return false;
+        if (event.ctrlKey && event.type !== 'wheel') return false;
+        // On touch devices, don't let a single-finger touch start a zoom gesture.
+        // d3-zoom's touchmoved() calls preventDefault() on any finger movement, and
+        // a real finger always jitters a little even on an intended tap — once
+        // preventDefault() fires anywhere in a touch sequence, iOS Safari permanently
+        // suppresses the synthetic click event for it, silently breaking tap-to-place
+        // (chip stays selected, Attempts never increments). Two-finger touches
+        // (pinch) are unaffected and still pan/zoom via the touch midpoint.
+        if (isTouch && event.touches && event.touches.length < 2) return false;
+        return true;
+      })
       .on('zoom', (event) => {
         const t = event.transform;
         zoomTransformRef.current = t;
@@ -511,7 +526,7 @@ export default function StateMap() {
       if (svgRef.current) d3.select(svgRef.current).on('.zoom', null);
     };
 
-  }, [topo, correct, wrong, quizMode, hoveredId, dragId, selectedId, isDragDrop, countyMeta, activeCategory, categoryFeatures, chipItems]);
+  }, [topo, correct, wrong, quizMode, hoveredId, dragId, selectedId, isDragDrop, isTouch, countyMeta, activeCategory, categoryFeatures, chipItems]);
 
 
   // ── Drag handlers ────────────────────────────────────────────────────────────
