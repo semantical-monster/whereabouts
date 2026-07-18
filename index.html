@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="google-adsense-account" content="ca-pub-9733717751219556">
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9733717751219556" crossorigin="anonymous"></script>
     <title>Whereabouts — USA Geography Quiz</title>
@@ -15,6 +15,8 @@
       html, body, #root { margin: 0; padding: 0; height: 100%; }
       body { background: #0f1923; }
       button { font-family: inherit; }
+      /* Fallback to 100vh, upgrade to 100dvh where supported (mobile Safari/Chrome URL bar) */
+      .app-height { height: 100vh; height: 100dvh; }
     </style>
   </head>
   <body>

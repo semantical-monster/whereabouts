@@ -4,13 +4,14 @@ import USAMap from './components/USAMap';
 import StateMap from './components/StateMap';
 import AboutPage from './components/AboutPage';
 import { T } from './styles/theme';
+import { useMediaQuery } from './hooks/useMediaQuery';
 
 export default function App() {
   const { view, activeState, activeCategory, score, streak, setView, resetQuiz } = useQuizStore();
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   return (
-    <div style={{
-      height: '100vh',
+    <div className="app-height" style={{
       background: T.bgPrimary,
       fontFamily: 'Raleway, sans-serif',
       display: 'flex',
@@ -19,39 +20,42 @@ export default function App() {
       <header style={{
         background: T.bgSecondary,
         borderBottom: `3px solid ${T.gold}`,
-        padding: '14px 28px',
+        padding: isMobile ? '10px 14px' : '14px 28px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexShrink: 0,
+        gap: isMobile ? 10 : 0,
       }}>
         <div
           onClick={() => { setView('usa'); resetQuiz(); }}
-          style={{ cursor: 'pointer', transition: 'filter 0.15s' }}
+          style={{ cursor: 'pointer', transition: 'filter 0.15s', minWidth: 0 }}
           onMouseEnter={e => { e.currentTarget.style.filter = 'drop-shadow(0 0 6px rgba(196,144,42,0.5))'; }}
           onMouseLeave={e => { e.currentTarget.style.filter = 'none'; }}
         >
-          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 26, fontWeight: 700, color: T.textPrimary, letterSpacing: -0.5, lineHeight: 1 }}>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: isMobile ? 20 : 26, fontWeight: 700, color: T.textPrimary, letterSpacing: -0.5, lineHeight: 1 }}>
             Where<span style={{ color: T.gold }}>abouts</span>
           </div>
-          <div style={{ fontSize: 9, letterSpacing: 3, textTransform: 'uppercase', color: T.textSecondary, marginTop: 3 }}>
-            USA · Geography Quest
-          </div>
+          {!isMobile && (
+            <div style={{ fontSize: 9, letterSpacing: 3, textTransform: 'uppercase', color: T.textSecondary, marginTop: 3 }}>
+              USA · Geography Quest
+            </div>
+          )}
         </div>
-        <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
-          {view === 'state' && activeState && (
+        <div style={{ display: 'flex', gap: isMobile ? 10 : 24, alignItems: 'center', flexShrink: 0 }}>
+          {view === 'state' && activeState && !isMobile && (
             <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, color: T.gold, fontWeight: 700, borderLeft: `2px solid rgba(196,144,42,0.4)`, paddingLeft: 16 }}>
               {activeState.name} — {activeCategory.charAt(0).toUpperCase() + activeCategory.slice(1)} Quiz
             </div>
           )}
           <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 9, color: T.textSecondary, letterSpacing: 1, textTransform: 'uppercase' }}>Score</div>
-            <div style={{ fontSize: 22, fontWeight: 700, color: T.goldBright, lineHeight: 1.1 }}>{score.toLocaleString()}</div>
+            <div style={{ fontSize: isMobile ? 8 : 9, color: T.textSecondary, letterSpacing: 1, textTransform: 'uppercase' }}>Score</div>
+            <div style={{ fontSize: isMobile ? 16 : 22, fontWeight: 700, color: T.goldBright, lineHeight: 1.1 }}>{score.toLocaleString()}</div>
           </div>
           {streak > 0 && (
-            <div style={{ background: 'rgba(196,144,42,0.15)', border: '1px solid rgba(196,144,42,0.4)', borderRadius: 4, padding: '6px 12px', textAlign: 'center' }}>
-              <div style={{ fontSize: 9, color: T.gold, letterSpacing: 1 }}>STREAK</div>
-              <div style={{ fontSize: 18, fontWeight: 700, color: T.goldBright }}>{streak} 🔥</div>
+            <div style={{ background: 'rgba(196,144,42,0.15)', border: '1px solid rgba(196,144,42,0.4)', borderRadius: 4, padding: isMobile ? '4px 8px' : '6px 12px', textAlign: 'center' }}>
+              <div style={{ fontSize: isMobile ? 8 : 9, color: T.gold, letterSpacing: 1 }}>STREAK</div>
+              <div style={{ fontSize: isMobile ? 14 : 18, fontWeight: 700, color: T.goldBright }}>{streak} 🔥</div>
             </div>
           )}
         </div>

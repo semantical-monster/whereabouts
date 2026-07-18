@@ -6,6 +6,7 @@ import { UTAH_COUNTIES } from '../data/utahCounties';
 import { STATE_FEATURES } from '../data/features/index.js';
 import { isWhitelisted } from '../data/riverWhitelist.js';
 import { T } from '../styles/theme';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const CATEGORY_INSTRUCTIONS = {
   counties: 'Drag county name onto the map',
@@ -23,22 +24,25 @@ const ZOOM_HINTS = {
   cities:   'Scroll to zoom in on cities',
 };
 
-function FeatureChip({ id, label, onDragStart, onDragEnd, onChipClick, placed, wrong, selected, held }) {
+function FeatureChip({ id, label, onDragStart, onDragEnd, onChipClick, placed, wrong, selected, held, isTouch, isMobile }) {
   if (placed) return null;
   const isActive = selected || held;
   return (
     <div
-      draggable
-      onDragStart={e => onDragStart(e, id)}
-      onDragEnd={onDragEnd}
+      draggable={!isTouch}
+      onDragStart={isTouch ? undefined : e => onDragStart(e, id)}
+      onDragEnd={isTouch ? undefined : onDragEnd}
       onClick={() => onChipClick(id)}
       style={{
-        padding: '5px 10px',
+        padding: isMobile ? '10px 14px' : '5px 10px',
+        minHeight: isMobile ? 40 : undefined,
+        display: isMobile ? 'inline-flex' : undefined,
+        alignItems: isMobile ? 'center' : undefined,
         background: selected ? 'rgba(196,144,42,0.3)' : held ? 'rgba(196,144,42,0.12)' : wrong ? 'rgba(122,42,26,0.35)' : 'rgba(28,42,58,0.7)',
         border: `1px solid ${isActive ? 'rgba(196,144,42,0.8)' : wrong ? 'rgba(122,42,26,0.6)' : 'rgba(74,106,132,0.4)'}`,
         borderRadius: 4,
         fontFamily: 'Raleway, sans-serif',
-        fontSize: 11,
+        fontSize: isMobile ? 13 : 11,
         fontWeight: 500,
         color: isActive ? T.gold : wrong ? '#f0a898' : T.textPrimary,
         cursor: 'pointer',
@@ -126,7 +130,13 @@ export default function StateMap() {
     activeState, activeCategory,
   } = useQuizStore();
 
-  const isDragDrop = quizMode === 'drag-drop';
+  // Native HTML5 drag events never fire on touchscreens — force click-id
+  // (tap chip, tap target) on touch devices regardless of the stored quizMode.
+  const isTouch = useMediaQuery('(hover: none) and (pointer: coarse)');
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [legendOpen, setLegendOpen] = useState(false);
+  const effectiveQuizMode = isTouch ? 'click-id' : quizMode;
+  const isDragDrop = effectiveQuizMode === 'drag-drop';
 
   useEffect(() => {
     fetch('/counties-10m.json').then(r => r.json()).then(setTopo);
@@ -341,38 +351,30 @@ export default function StateMap() {
         })
         .on('click', function(event, d) {
           const fips = d.id.toString().padStart(5, '0');
-          if (isDragDrop) {
-            if (!selectedId) return;
-            const county = countyMeta[selectedId];
-            const isFirstTry = !everAttemptedRef.current.has(selectedId);
-            everAttemptedRef.current = new Set([...everAttemptedRef.current, selectedId]);
-            setAttempts(n => n + 1);
-            if (selectedId === fips) {
-              markCorrect(selectedId);
-              addScore(120);
-              if (isFirstTry) setFirstTryCount(n => n + 1);
-              flashFeedback(`✓ ${county?.name}!`, 'correct');
-              setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; });
-            } else {
-              markWrong(selectedId);
-              breakStreak();
-              flashFeedback('Incorrect', 'wrong');
-              setWrongIds(s => new Set([...s, selectedId]));
-              setTimeout(() => setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; }), 1200);
-            }
-            setSelectedId(null);
-            return;
-          }
-          const county = countyMeta[fips];
-          if (!county) return;
-          if (!correct.has(fips)) {
-            markCorrect(fips);
-            addScore(50);
-            flashFeedback(`✓ ${county.name} County`, 'correct');
+          // Chip-select-then-click works in both quiz modes (chips are always
+          // clickable) — mirrors handleNonCountyClick below. Do not gate this
+          // on isDragDrop: that previously left click-id mode with no working
+          // click handler for counties (any tap instantly "solved" whatever
+          // was clicked, ignoring the selected chip entirely).
+          if (!selectedId) return;
+          const county = countyMeta[selectedId];
+          const isFirstTry = !everAttemptedRef.current.has(selectedId);
+          everAttemptedRef.current = new Set([...everAttemptedRef.current, selectedId]);
+          setAttempts(n => n + 1);
+          if (selectedId === fips) {
+            markCorrect(selectedId);
+            addScore(120);
+            if (isFirstTry) setFirstTryCount(n => n + 1);
+            flashFeedback(`✓ ${county?.name}!`, 'correct');
+            setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; });
           } else {
-            const sub = county.seat ? `${county.name} · Seat: ${county.seat}` : county.name;
-            flashFeedback(sub, 'info');
+            markWrong(selectedId);
+            breakStreak();
+            flashFeedback('Incorrect', 'wrong');
+            setWrongIds(s => new Set([...s, selectedId]));
+            setTimeout(() => setWrongIds(s => { const n = new Set(s); n.delete(selectedId); return n; }), 1200);
           }
+          setSelectedId(null);
         });
     }
 
@@ -631,16 +633,16 @@ export default function StateMap() {
   const total = chipItems.length;
   const identified = correct.size;
   const pct = total > 0 ? Math.round((identified / total) * 100) : 0;
-  const categoryLabel = CATEGORY_INSTRUCTIONS[activeCategory] || '';
+  const categoryLabel = isTouch ? 'Tap a name, then tap it on the map' : (CATEGORY_INSTRUCTIONS[activeCategory] || '');
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%', overflow: 'hidden' }}>
 
-      {/* ── LEFT: Map panel ── */}
+      {/* ── LEFT: Map panel (top on mobile, ~55% of viewport height) ── */}
       <div
         ref={mapContainerRef}
         style={{
-          flex: 1, overflow: 'hidden', background: T.bgMap,
+          flex: isMobile ? '0 0 55vh' : 1, overflow: 'hidden', background: T.bgMap,
           backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(0,0,0,0.06) 1px, transparent 0)',
           backgroundSize: '22px 22px',
           display: 'flex', flexDirection: 'column', gap: 8, padding: 16,
@@ -649,6 +651,24 @@ export default function StateMap() {
         onDrop={isDragDrop ? handleDrop : undefined}
         onDragLeave={() => setHoveredId(null)}
       >
+        {isMobile && (
+          <div style={{
+            flexShrink: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'center',
+            gap: 8, background: 'rgba(255,255,255,0.55)', border: '1px solid rgba(0,0,0,0.08)',
+            borderRadius: 4, padding: '5px 10px',
+          }}>
+            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: '#3a4a54' }}>
+              First try <strong style={{ color: T.gold }}>{firstTryCount}/{total}</strong>
+            </span>
+            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: '#3a4a54' }}>
+              Attempts <strong>{attempts}</strong>
+            </span>
+            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: '#3a4a54' }}>
+              {identified}/{total} placed
+            </span>
+          </div>
+        )}
+
         {feedback && (
           <div style={{
             flexShrink: 0, alignSelf: 'center', background: T.bgTertiary,
@@ -663,7 +683,7 @@ export default function StateMap() {
         )}
 
         <div
-          style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden' }}
+          style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden', touchAction: isTouch ? 'none' : undefined }}
           onClick={e => { if (!e.target.closest('[data-id]')) setDragId(null); }}
           onMouseMove={handleMapMouseMove}
           onMouseLeave={handleMapMouseLeave}
@@ -671,7 +691,7 @@ export default function StateMap() {
           <svg
             ref={svgRef}
             viewBox="0 0 680 820"
-            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'block' }}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', display: 'block', touchAction: isTouch ? 'none' : undefined }}
           />
 
           {/* Scroll hint — all categories, dismisses on first scroll or after 4s */}
@@ -743,10 +763,14 @@ export default function StateMap() {
         </div>
       </div>
 
-      {/* ── RIGHT: Sidebar ── */}
-      <div style={{ width: 248, background: T.bgSecondary, display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-        {/* Score row */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '14px 14px 8px' }}>
+      {/* ── RIGHT: Sidebar (chip panel — stacks below map, scrolls, on mobile) ── */}
+      <div style={{
+        width: isMobile ? '100%' : 248, background: T.bgSecondary, display: 'flex', flexDirection: 'column',
+        overflow: isMobile ? 'hidden' : 'hidden', flex: isMobile ? 1 : undefined, minHeight: isMobile ? 0 : undefined,
+        height: isMobile ? undefined : '100%',
+      }}>
+        {/* Score row — duplicated as a compact strip above the map on mobile, hidden here */}
+        <div style={{ display: isMobile ? 'none' : 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, padding: '14px 14px 8px' }}>
           {[
             { label: 'First Try', value: `${firstTryCount} / ${total}`, color: T.goldBright },
             { label: 'Attempts', value: attempts, color: T.textSecondary },
@@ -767,7 +791,7 @@ export default function StateMap() {
             {categoryLabel}
             {selectedId && (
               <div style={{ marginTop: 5, color: T.gold, fontWeight: 600 }}>
-                Placing: <strong>{chipItems.find(c => c.id === selectedId)?.label.split(' (')[0]}</strong> — click the map
+                Placing: <strong>{chipItems.find(c => c.id === selectedId)?.label.split(' (')[0]}</strong> — {isTouch ? 'tap the map' : 'click the map'}
               </div>
             )}
           </div>
@@ -805,6 +829,8 @@ export default function StateMap() {
                 wrong={wrongIds.has(id)}
                 selected={selectedId === id}
                 held={dragId === id}
+                isTouch={isTouch}
+                isMobile={isMobile}
               />
             ))}
           </div>
@@ -825,7 +851,17 @@ export default function StateMap() {
 
         {/* Legend + back */}
         <div style={{ padding: 14, borderTop: '1px solid rgba(138,172,196,0.15)' }}>
-          {[
+          {isMobile && (
+            <button onClick={() => setLegendOpen(v => !v)} style={{
+              width: '100%', marginBottom: 8, padding: '8px', borderRadius: 4,
+              background: 'transparent', border: '1px solid rgba(138,172,196,0.25)',
+              fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary,
+              cursor: 'pointer', letterSpacing: 0.8, minHeight: 40,
+            }}>
+              {legendOpen ? '▲ Hide legend' : 'ⓘ Legend'}
+            </button>
+          )}
+          {(!isMobile || legendOpen) && [
             { color: activeCategory === 'counties' ? T.correct : T.goldBright, label: 'Correctly placed' },
             { color: activeCategory === 'counties' ? T.dropTarget : T.hover, label: activeCategory === 'counties' ? 'Drop target' : 'Hover target' },
             { color: activeCategory === 'counties' ? T.countyFill : '#4a6a84', label: 'Unplaced' },

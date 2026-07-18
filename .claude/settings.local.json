@@ -69,7 +69,18 @@
       "Bash(unzip -q NHD_H_Minnesota_State_GDB.zip '*.gdb/*')",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(git stash *)",
+      "Read(//tmp/**)",
+      "Skill(run)",
+      "Bash(command -v chromium-cli)",
+      "Bash(npx --yes playwright screenshot --help)",
+      "Bash(break)",
+      "Bash(npx --yes playwright screenshot --viewport-size=1440,900 http://localhost:5173 /tmp/desktop.png)",
+      "Bash(npx --yes playwright install chromium)",
+      "Bash(NODE_PATH=/Users/dbt/.npm/_npx/e41f203b7505f1fb/node_modules node /private/tmp/claude-501/-Users-dbt-Documents-geo-geonerd/ad2c9226-9d6f-461d-acda-25467e478aba/scratchpad/verify.mjs)",
+      "Bash(mkdir -p /private/tmp/claude-501/-Users-dbt-Documents-geo-geonerd/ad2c9226-9d6f-461d-acda-25467e478aba/scratchpad/node_modules)",
+      "Bash(ln -sf /Users/dbt/.npm/_npx/e41f203b7505f1fb/node_modules/playwright /private/tmp/claude-501/-Users-dbt-Documents-geo-geonerd/ad2c9226-9d6f-461d-acda-25467e478aba/scratchpad/node_modules/playwright)"
     ]
   }
 }

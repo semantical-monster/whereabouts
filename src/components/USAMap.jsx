@@ -4,6 +4,7 @@ import * as topojson from 'topojson-client';
 import polylabel from 'polylabel';
 import { useQuizStore } from '../store/quizStore';
 import { T } from '../styles/theme';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 const STATE_FIPS = {
   '01':'Alabama','02':'Alaska','04':'Arizona','05':'Arkansas','06':'California',
@@ -45,6 +46,7 @@ export default function USAMap() {
   const [tooltip, setTooltip] = useState(null);
   const [topo, setTopo] = useState(null);
   const { setActiveState, activeCategory, setActiveCategory } = useQuizStore();
+  const isMobile = useMediaQuery('(max-width: 768px)');
 
   useEffect(() => {
     fetch('/counties-10m.json').then(r => r.json()).then(setTopo);
@@ -147,7 +149,7 @@ export default function USAMap() {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap', width: '90vw', maxWidth: 1200 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap', width: isMobile ? '96vw' : '90vw', maxWidth: 1200 }}>
         {CATEGORIES.map(({ key, label }) => (
           <button
             key={key}
@@ -170,7 +172,7 @@ export default function USAMap() {
           </button>
         ))}
       </div>
-      <div style={{ position: 'relative', width: '90vw', maxWidth: 1200, flex: 1, minHeight: 0 }}>
+      <div style={{ position: 'relative', width: isMobile ? '96vw' : '90vw', maxWidth: 1200, flex: 1, minHeight: 0 }}>
         <svg
           ref={svgRef}
           viewBox="0 0 960 600"
