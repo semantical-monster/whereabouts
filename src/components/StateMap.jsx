@@ -634,15 +634,23 @@ export default function StateMap() {
   const identified = correct.size;
   const pct = total > 0 ? Math.round((identified / total) * 100) : 0;
   const categoryLabel = isTouch ? 'Tap a name, then tap it on the map' : (CATEGORY_INSTRUCTIONS[activeCategory] || '');
+  const legendItems = [
+    { color: activeCategory === 'counties' ? T.correct : T.goldBright, label: 'Correctly placed' },
+    { color: activeCategory === 'counties' ? T.dropTarget : T.hover, label: activeCategory === 'counties' ? 'Drop target' : 'Hover target' },
+    { color: activeCategory === 'counties' ? T.countyFill : '#4a6a84', label: 'Unplaced' },
+  ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%', overflow: 'hidden' }}>
+    <div style={{
+      display: 'flex', flexDirection: isMobile ? 'column' : 'row',
+      height: '100%', minHeight: isMobile ? 0 : undefined, overflow: 'hidden',
+    }}>
 
-      {/* ── LEFT: Map panel (top on mobile, ~55% of viewport height) ── */}
+      {/* ── LEFT: Map panel (top on mobile, ~45% of viewport height) ── */}
       <div
         ref={mapContainerRef}
         style={{
-          flex: isMobile ? '0 0 55vh' : 1, overflow: 'hidden', background: T.bgMap,
+          flex: isMobile ? '0 0 45vh' : 1, overflow: 'hidden', background: T.bgMap,
           backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(0,0,0,0.06) 1px, transparent 0)',
           backgroundSize: '22px 22px',
           display: 'flex', flexDirection: 'column', gap: 8, padding: 16,
@@ -703,7 +711,7 @@ export default function StateMap() {
               fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary,
               letterSpacing: 0.8, whiteSpace: 'nowrap',
             }}>
-              {ZOOM_HINTS[activeCategory]}
+              {isTouch ? 'Pinch to zoom' : ZOOM_HINTS[activeCategory]}
             </div>
           )}
 
@@ -766,7 +774,7 @@ export default function StateMap() {
       {/* ── RIGHT: Sidebar (chip panel — stacks below map, scrolls, on mobile) ── */}
       <div style={{
         width: isMobile ? '100%' : 248, background: T.bgSecondary, display: 'flex', flexDirection: 'column',
-        overflow: isMobile ? 'hidden' : 'hidden', flex: isMobile ? 1 : undefined, minHeight: isMobile ? 0 : undefined,
+        overflow: 'hidden', flex: isMobile ? '1 1 auto' : undefined, minHeight: isMobile ? 0 : undefined,
         height: isMobile ? undefined : '100%',
       }}>
         {/* Score row — duplicated as a compact strip above the map on mobile, hidden here */}
@@ -810,7 +818,11 @@ export default function StateMap() {
         )}
 
         {/* Chip pool */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{
+          flex: isMobile ? '1 1 auto' : 1, minHeight: isMobile ? 0 : undefined,
+          overflowY: 'auto', WebkitOverflowScrolling: isMobile ? 'touch' : undefined,
+          padding: '0 14px 14px', display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
           <div style={{ position: 'sticky', top: 0, background: T.bgSecondary, paddingBottom: 6, zIndex: 1 }}>
             <div style={{ fontFamily: 'Raleway, sans-serif', fontSize: 9, letterSpacing: 2, textTransform: 'uppercase', color: T.textSecondary, fontWeight: 600 }}>
               {unplaced.length} remaining
@@ -850,34 +862,50 @@ export default function StateMap() {
         </div>
 
         {/* Legend + back */}
-        <div style={{ padding: 14, borderTop: '1px solid rgba(138,172,196,0.15)' }}>
-          {isMobile && (
-            <button onClick={() => setLegendOpen(v => !v)} style={{
-              width: '100%', marginBottom: 8, padding: '8px', borderRadius: 4,
-              background: 'transparent', border: '1px solid rgba(138,172,196,0.25)',
-              fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary,
-              cursor: 'pointer', letterSpacing: 0.8, minHeight: 40,
-            }}>
-              {legendOpen ? '▲ Hide legend' : 'ⓘ Legend'}
-            </button>
+        <div style={{ padding: 14, borderTop: '1px solid rgba(138,172,196,0.15)', flexShrink: isMobile ? 0 : undefined }}>
+          {isMobile ? (
+            <>
+              {legendOpen && legendItems.map(({ color, label }) => (
+                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
+                  <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary }}>{label}</span>
+                </div>
+              ))}
+              <div style={{ display: 'flex', gap: 8, marginTop: legendOpen ? 8 : 0 }}>
+                <button onClick={() => setLegendOpen(v => !v)} style={{
+                  flex: 1, padding: '8px', borderRadius: 4, minHeight: 36,
+                  background: 'transparent', border: '1px solid rgba(138,172,196,0.25)',
+                  fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary,
+                  cursor: 'pointer', letterSpacing: 0.8,
+                }}>
+                  {legendOpen ? '▲ Hide legend' : 'ⓘ Legend'}
+                </button>
+                <button onClick={() => { handleReset(); setView('usa'); }} style={{
+                  flex: 1, padding: '8px', borderRadius: 4, minHeight: 36,
+                  background: 'transparent', border: '1px solid rgba(74,106,132,0.3)',
+                  fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, cursor: 'pointer', letterSpacing: 1, fontWeight: 500,
+                }}>
+                  ← All States
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {legendItems.map(({ color, label }) => (
+                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
+                  <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary }}>{label}</span>
+                </div>
+              ))}
+              <button onClick={() => { handleReset(); setView('usa'); }} style={{
+                width: '100%', marginTop: 8, padding: '8px', borderRadius: 4,
+                background: 'transparent', border: '1px solid rgba(74,106,132,0.3)',
+                fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, cursor: 'pointer', letterSpacing: 1, fontWeight: 500,
+              }}>
+                ← All States
+              </button>
+            </>
           )}
-          {(!isMobile || legendOpen) && [
-            { color: activeCategory === 'counties' ? T.correct : T.goldBright, label: 'Correctly placed' },
-            { color: activeCategory === 'counties' ? T.dropTarget : T.hover, label: activeCategory === 'counties' ? 'Drop target' : 'Hover target' },
-            { color: activeCategory === 'counties' ? T.countyFill : '#4a6a84', label: 'Unplaced' },
-          ].map(({ color, label }) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-              <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
-              <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary }}>{label}</span>
-            </div>
-          ))}
-          <button onClick={() => { handleReset(); setView('usa'); }} style={{
-            width: '100%', marginTop: 8, padding: '8px', borderRadius: 4,
-            background: 'transparent', border: '1px solid rgba(74,106,132,0.3)',
-            fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, cursor: 'pointer', letterSpacing: 1, fontWeight: 500,
-          }}>
-            ← All States
-          </button>
         </div>
       </div>
     </div>

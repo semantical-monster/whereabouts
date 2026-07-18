@@ -17,6 +17,11 @@
       button { font-family: inherit; }
       /* Fallback to 100vh, upgrade to 100dvh where supported (mobile Safari/Chrome URL bar) */
       .app-height { height: 100vh; height: 100dvh; }
+      /* Below 768px the app is a fixed-height single screen (map + internally-scrolling
+         chip panel) — lock the document so only the chip panel scrolls, not the body. */
+      @media (max-width: 768px) {
+        html, body { overflow: hidden; overscroll-behavior: none; }
+      }
     </style>
   </head>
   <body>
