@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuizStore } from './store/quizStore';
 import USAMap from './components/USAMap';
 import StateMap from './components/StateMap';
@@ -9,6 +9,20 @@ import { useMediaQuery } from './hooks/useMediaQuery';
 export default function App() {
   const { view, activeState, activeCategory, score, streak, setView, resetQuiz } = useQuizStore();
   const isMobile = useMediaQuery('(max-width: 768px)');
+
+  // iOS Safari doesn't reliably fire 'click' on tapped elements (see StateMap's
+  // withDedupe) — without "All States" on mobile, this logo is the only way back
+  // to the USA map, so it needs the same pointerup-primary / click-fallback guard.
+  const lastLogoPointerUpAtRef = useRef(0);
+  const handleLogoActivate = (event) => {
+    if (event.type === 'pointerup') {
+      lastLogoPointerUpAtRef.current = Date.now();
+    } else if (Date.now() - lastLogoPointerUpAtRef.current < 500) {
+      return;
+    }
+    setView('usa');
+    resetQuiz();
+  };
 
   return (
     <div className="app-height" style={{
@@ -28,7 +42,8 @@ export default function App() {
         gap: isMobile ? 10 : 0,
       }}>
         <div
-          onClick={() => { setView('usa'); resetQuiz(); }}
+          onClick={handleLogoActivate}
+          onPointerUp={handleLogoActivate}
           style={{ cursor: 'pointer', transition: 'filter 0.15s', minWidth: 0 }}
           onMouseEnter={e => { e.currentTarget.style.filter = 'drop-shadow(0 0 6px rgba(196,144,42,0.5))'; }}
           onMouseLeave={e => { e.currentTarget.style.filter = 'none'; }}

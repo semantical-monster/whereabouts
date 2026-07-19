@@ -35,11 +35,11 @@ function FeatureChip({ id, label, onDragStart, onDragEnd, onChipClick, placed, w
   const handleActivate = (event) => {
     if (event.type === 'pointerup') {
       lastPointerUpAtRef.current = Date.now();
-      onChipClick(id, event.type);
+      onChipClick(id);
       return;
     }
     if (Date.now() - lastPointerUpAtRef.current < 500) return;
-    onChipClick(id, event.type);
+    onChipClick(id);
   };
   return (
     <div
@@ -142,9 +142,6 @@ export default function StateMap() {
   // "pointerup already handled this" and skip, so mouse users don't get double
   // attempts. See withDedupe() in the SVG-build effect below.
   const lastPointerUpRef = useRef({ id: null, t: 0 });
-  // TEMPORARY on-device debug readout (mobile only) — remove once tap-to-place
-  // is confirmed working on iOS Safari.
-  const [lastEventDebug, setLastEventDebug] = useState('none');
 
   const {
     quizMode,
@@ -158,7 +155,6 @@ export default function StateMap() {
   // (tap chip, tap target) on touch devices regardless of the stored quizMode.
   const isTouch = useMediaQuery('(hover: none) and (pointer: coarse)');
   const isMobile = useMediaQuery('(max-width: 768px)');
-  const [legendOpen, setLegendOpen] = useState(false);
   const effectiveQuizMode = isTouch ? 'click-id' : quizMode;
   const isDragDrop = effectiveQuizMode === 'drag-drop';
 
@@ -241,7 +237,6 @@ export default function StateMap() {
     setDragId(null);
     keepDragIdRef.current = false;
     lastPointerUpRef.current = { id: null, t: 0 };
-    setLastEventDebug('none');
   }, [activeState?.fips, activeCategory]);
 
   // Reset zoom transform and manage scroll hint when state or category changes
@@ -290,13 +285,11 @@ export default function StateMap() {
     const withDedupe = (event, id, fn) => {
       if (event.type === 'pointerup') {
         lastPointerUpRef.current = { id, t: Date.now() };
-        setLastEventDebug(`pointerup:${id}`);
         fn();
         return;
       }
       const last = lastPointerUpRef.current;
       if (last.id === id && Date.now() - last.t < 500) return;
-      setLastEventDebug(`click:${id}`);
       fn();
     };
 
@@ -607,9 +600,8 @@ export default function StateMap() {
     e.dataTransfer.setData('text/plain', id);
   }, []);
 
-  const handleChipClick = useCallback((id, eventType) => {
+  const handleChipClick = useCallback((id) => {
     setSelectedId(prev => prev === id ? null : id);
-    setLastEventDebug(`chip-${eventType}:${id}`);
   }, []);
 
   const handleDragOver = useCallback((e) => {
@@ -731,11 +723,11 @@ export default function StateMap() {
       height: '100%', minHeight: isMobile ? 0 : undefined, overflow: 'hidden',
     }}>
 
-      {/* ── LEFT: Map panel (top on mobile, ~45% of viewport height) ── */}
+      {/* ── LEFT: Map panel (top on mobile, ~32% of viewport height) ── */}
       <div
         ref={mapContainerRef}
         style={{
-          flex: isMobile ? '0 0 45vh' : 1, overflow: 'hidden', background: T.bgMap,
+          flex: isMobile ? '0 0 32vh' : 1, overflow: 'hidden', background: T.bgMap,
           backgroundImage: 'radial-gradient(circle at 1px 1px, rgba(0,0,0,0.06) 1px, transparent 0)',
           backgroundSize: '22px 22px',
           display: 'flex', flexDirection: 'column', gap: 8, padding: 16,
@@ -748,15 +740,15 @@ export default function StateMap() {
           <div style={{
             flexShrink: 0, display: 'flex', justifyContent: 'space-around', alignItems: 'center',
             gap: 8, background: 'rgba(255,255,255,0.55)', border: '1px solid rgba(0,0,0,0.08)',
-            borderRadius: 4, padding: '5px 10px',
+            borderRadius: 4, padding: '4px 10px',
           }}>
-            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: '#3a4a54' }}>
+            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 9, color: '#3a4a54' }}>
               First try <strong style={{ color: T.gold }}>{firstTryCount}/{total}</strong>
             </span>
-            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: '#3a4a54' }}>
+            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 9, color: '#3a4a54' }}>
               Attempts <strong>{attempts}</strong>
             </span>
-            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: '#3a4a54' }}>
+            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 9, color: '#3a4a54' }}>
               {identified}/{total} placed
             </span>
           </div>
@@ -840,12 +832,15 @@ export default function StateMap() {
         </div>
 
         <div style={{ flexShrink: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, fontWeight: 500 }}>
-              {identified} / {total} placed
-            </span>
-            <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, fontWeight: 500 }}>{pct}%</span>
-          </div>
+          {/* Mobile shows this same info in the compact stats strip above the map */}
+          {!isMobile && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+              <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, fontWeight: 500 }}>
+                {identified} / {total} placed
+              </span>
+              <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, fontWeight: 500 }}>{pct}%</span>
+            </div>
+          )}
           <div style={{ background: 'rgba(0,0,0,0.15)', height: 4, borderRadius: 3, overflow: 'hidden' }}>
             <div style={{
               height: '100%', width: `${pct}%`,
@@ -879,7 +874,7 @@ export default function StateMap() {
         </div>
 
         {/* Instruction label */}
-        <div style={{ padding: '0 14px 10px' }}>
+        <div style={{ padding: isMobile ? '0 14px 6px' : '0 14px 10px' }}>
           <div style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, background: 'rgba(255,255,255,0.03)', borderRadius: 4, border: '1px solid rgba(138,172,196,0.15)', padding: '7px 10px', lineHeight: 1.5 }}>
             {categoryLabel}
             {selectedId && (
@@ -890,23 +885,9 @@ export default function StateMap() {
           </div>
         </div>
 
-        {/* TEMPORARY on-device debug readout — remove once tap-to-place is
-            confirmed working on iOS Safari. */}
-        {isMobile && (
-          <div style={{ padding: '0 14px 10px' }}>
-            <div style={{
-              fontFamily: 'monospace', fontSize: 9, color: T.textMuted,
-              background: 'rgba(0,0,0,0.2)', borderRadius: 4, padding: '4px 8px',
-              wordBreak: 'break-all',
-            }}>
-              sel: {selectedId ?? 'none'} · last: {lastEventDebug}
-            </div>
-          </div>
-        )}
-
         {/* Auto-solve */}
         {unplaced.length > 0 && (
-          <div style={{ padding: '0 14px 10px' }}>
+          <div style={{ padding: isMobile ? '0 14px 6px' : '0 14px 10px' }}>
             <AutoSolveButton onSolve={() => {
               const ids = activeCategory === 'counties'
                 ? Object.keys(countyMeta).filter(id => !correct.has(id))
@@ -960,52 +941,26 @@ export default function StateMap() {
           )}
         </div>
 
-        {/* Legend + back */}
-        <div style={{ padding: 14, borderTop: '1px solid rgba(138,172,196,0.15)', flexShrink: isMobile ? 0 : undefined }}>
-          {isMobile ? (
-            <>
-              {legendOpen && legendItems.map(({ color, label }) => (
-                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
-                  <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary }}>{label}</span>
-                </div>
-              ))}
-              <div style={{ display: 'flex', gap: 8, marginTop: legendOpen ? 8 : 0 }}>
-                <button onClick={() => setLegendOpen(v => !v)} style={{
-                  flex: 1, padding: '8px', borderRadius: 4, minHeight: 36,
-                  background: 'transparent', border: '1px solid rgba(138,172,196,0.25)',
-                  fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary,
-                  cursor: 'pointer', letterSpacing: 0.8,
-                }}>
-                  {legendOpen ? '▲ Hide legend' : 'ⓘ Legend'}
-                </button>
-                <button onClick={() => { handleReset(); setView('usa'); }} style={{
-                  flex: 1, padding: '8px', borderRadius: 4, minHeight: 36,
-                  background: 'transparent', border: '1px solid rgba(74,106,132,0.3)',
-                  fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, cursor: 'pointer', letterSpacing: 1, fontWeight: 500,
-                }}>
-                  ← All States
-                </button>
+        {/* Legend + back — desktop only. On mobile these are dropped entirely to
+            give chips the space; the header logo (with the same pointerup guard)
+            is the way back to the USA map. */}
+        {!isMobile && (
+          <div style={{ padding: 14, borderTop: '1px solid rgba(138,172,196,0.15)' }}>
+            {legendItems.map(({ color, label }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
+                <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary }}>{label}</span>
               </div>
-            </>
-          ) : (
-            <>
-              {legendItems.map(({ color, label }) => (
-                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-                  <div style={{ width: 10, height: 10, borderRadius: 2, background: color, flexShrink: 0 }} />
-                  <span style={{ fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary }}>{label}</span>
-                </div>
-              ))}
-              <button onClick={() => { handleReset(); setView('usa'); }} style={{
-                width: '100%', marginTop: 8, padding: '8px', borderRadius: 4,
-                background: 'transparent', border: '1px solid rgba(74,106,132,0.3)',
-                fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, cursor: 'pointer', letterSpacing: 1, fontWeight: 500,
-              }}>
-                ← All States
-              </button>
-            </>
-          )}
-        </div>
+            ))}
+            <button onClick={() => { handleReset(); setView('usa'); }} style={{
+              width: '100%', marginTop: 8, padding: '8px', borderRadius: 4,
+              background: 'transparent', border: '1px solid rgba(74,106,132,0.3)',
+              fontFamily: 'Raleway, sans-serif', fontSize: 10, color: T.textSecondary, cursor: 'pointer', letterSpacing: 1, fontWeight: 500,
+            }}>
+              ← All States
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
